@@ -1,0 +1,126 @@
+!pip install shap xgboost imbalanced-learn
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, roc_curve, precision_recall_curve
+from imblearn.over_sampling import SMOTE
+from xgboost import XGBClassifier
+import shap
+
+print("Loading dataset...")
+df = pd.read_csv('application_train.csv')
+
+# Select representative numeric features for Demographics, Financials, and Behavioral/External scores
+features = [
+    'AMT_INCOME_TOTAL', 'AMT_CREDIT', 'AMT_ANNUITY', 'DAYS_BIRTH',
+    'DAYS_EMPLOYED', 'EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3'
+]
+
+X = df[features]
+y = df['TARGET']  # Defined the target column
+
+# 3. Data Preprocessing
+print("Imputing missing values...")
+imputer = SimpleImputer(strategy='median')
+X_imputed = imputer.fit_transform(X)
+X_imputed = pd.DataFrame(X_imputed, columns=features)
+
+# Train-Test Split (80/20)
+X_train, X_test, y_train, y_test = train_test_split(X_imputed, y, test_size=0.2, random_state=42, stratify=y)
+
+# 4. Handle Class Imbalance using SMOTE
+print("Applying SMOTE...")
+smote = SMOTE(random_state=42)
+X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
+
+# 5. Train XGBoost Model
+print("Training XGBoost Model...")
+xgb_model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
+xgb_model.fit(X_train_smote, y_train_smote)
+
+# Generate Predictions
+y_pred = xgb_model.predict(X_test)
+y_proba = xgb_model.predict_proba(X_test)[:, 1]
+
+# 6. Calculate Evaluation Metrics
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred)
+auc = roc_auc_score(y_test, y_proba)
+
+print("\n" + "="*35)
+print("--- MODEL EVALUATION METRICS ---")
+print(f"Accuracy:  {accuracy:.4f}")
+print(f"Precision: {precision:.4f}")
+print(f"Recall:    {recall:.4f}")
+print(f"F1 Score:  {f1:.4f}")
+print(f"AUC-ROC:   {auc:.4f}")
+print("="*35 + "\n")
+
+# 7. Generate and Save 5 Required Graphs (300 DPI)
+print("Generating graphs...")
+
+# Graph 1: Class Imbalance (Before vs After SMOTE)
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+sns.countplot(x=y_train, palette="Blues")
+plt.title("Original Class Distribution")
+plt.xlabel("Target (0 = Good, 1 = Default)")
+plt.subplot(1, 2, 2)
+sns.countplot(x=y_train_smote, palette="Oranges")
+plt.title("After SMOTE Distribution")
+plt.xlabel("Target (0 = Good, 1 = Default)")
+plt.tight_layout()
+plt.savefig("graph1_class_distribution.png", dpi=300)
+plt.show()
+
+# Graph 2: Confusion Matrix
+plt.figure(figsize=(6, 5))
+cm = confusion_matrix(y_test, y_pred)
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False)
+plt.title("Confusion Matrix")
+plt.xlabel("Predicted Label")
+plt.ylabel("True Label")
+plt.savefig("graph2_confusion_matrix.png", dpi=300)
+plt.show()
+
+# Graph 3: ROC Curve
+fpr, tpr, _ = roc_curve(y_test, y_proba)
+plt.figure(figsize=(6, 5))
+plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {auc:.2f})')
+plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--') # Fixed baseline coordinates
+plt.title("Receiver Operating Characteristic (ROC) Curve")
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.legend(loc="lower right")
+plt.savefig("graph3_roc_curve.png", dpi=300)
+plt.show()
+
+# Graph 4: Precision-Recall Curve
+precision_vals, recall_vals, _ = precision_recall_curve(y_test, y_proba)
+plt.figure(figsize=(6, 5))
+plt.plot(recall_vals, precision_vals, color='green', lw=2)
+plt.title("Precision-Recall Curve")
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.savefig("graph4_pr_curve.png", dpi=300)
+plt.show()
+
+# Graph 5: SHAP Summary Plot (Explainable AI)
+print("Calculating SHAP values for Explainable AI...")
+# Using a sample of test data to prevent RAM overload
+X_test_sample = X_test.sample(n=500, random_state=42)
+explainer = shap.TreeExplainer(xgb_model)
+shap_values = explainer.shap_values(X_test_sample)
+
+plt.figure(figsize=(8, 6))
+shap.summary_plot(shap_values, X_test_sample, show=False)
+plt.title("SHAP Summary Plot: Feature Importance & Impact")
+plt.tight_layout()
+plt.savefig("graph5_shap_summary.png", dpi=300)
+plt.show()
